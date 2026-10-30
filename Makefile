@@ -6,15 +6,16 @@ TORCH_CU130 = https://download.pytorch.org/whl/cu130
 SCALE_ARGS = --model scaled --data tinystories --steps 15 --global-batch 32 --seq-len 128 --threads-per-rank 2 --warmup-steps 3
 GPU_ARGS = --device cuda --model scaled --data tinystories --steps 300 --global-batch 32 --seq-len 128 --lr 1e-3 --warmup-steps 20
 
-# CPU build of PyTorch (enough for every test and for the gloo multi-process runs).
+# CPU build of PyTorch (enough for every test and for the gloo multi-process runs). setuptools
+# comes from PyPI first: the PyTorch index only carries an old copy (78.1.0) with known advisories.
 setup:
-	$(PY) -m pip install --upgrade pip
+	$(PY) -m pip install --upgrade pip setuptools
 	$(PY) -m pip install torch --index-url $(TORCH_CPU)
 	$(PY) -m pip install -e ".[dev]"
 
 # CUDA 13.0 build of PyTorch, for the single-GPU run.
 setup-gpu:
-	$(PY) -m pip install --upgrade pip
+	$(PY) -m pip install --upgrade pip setuptools
 	$(PY) -m pip install torch --index-url $(TORCH_CU130)
 	$(PY) -m pip install -e ".[dev]"
 
