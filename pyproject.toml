@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "distributed-training-lab"
+version = "0.1.0"
+description = "Data-parallel training of a scaled-up tiny transformer: DDP with a hand-written ring all-reduce, checked against PyTorch DDP."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["torch>=2.9", "numpy>=2"]  # numpy: torch warns at import without it
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-timeout>=2.3", "ruff>=0.6", "mypy>=1.11", "pip-audit>=2.7"]
+
+[project.scripts]
+dtlab = "distributed_training_lab.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 600
+
+[tool.ruff]
+line-length = 100
+extend-exclude = [".tmp", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "S", "SIM", "RUF", "N", "C4", "PT", "RET", "PIE", "PERF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S311"]
+
+[tool.mypy]
+strict = true
+files = ["src", "tests"]

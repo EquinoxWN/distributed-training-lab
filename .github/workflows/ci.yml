@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: the workflow can read the code and nothing else.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Every action is pinned to a full commit SHA.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      # CPU build of PyTorch; CI runners have no GPU, so the CUDA run is local only.
+      - run: make setup
+      - run: make lint
+      - run: make test
+      - name: Ring all-reduce on 4 gloo ranks
+        run: |
+          if dtlab verify --world-size 4 | tee verify.log; then
+            echo "::notice title=ring all-reduce::$(tail -1 verify.log)"
+          else
+            echo "::error title=ring all-reduce::$(tail -1 verify.log)"; exit 1
+          fi
+      - name: DDP on 1, 2 and 4 gloo ranks (synthetic data)
+        run: |
+          dtlab scale --world-sizes 1,2,4 --steps 10 --global-batch 16 --seq-len 64 --threads-per-rank 1 --name ci-scale | tee scale.log
+          python - <<'PY'
+          import json
+          runs = json.load(open(".tmp/runs/ci-scale.json"))["runs"]
+          ok = all(r["replica_max_abs_diff"] == 0.0 for r in runs)
+          base = runs[0]["losses"]
+          ok = ok and all(max(abs(a - b) for a, b in zip(r["losses"], base)) < 1e-3 for r in runs)
+          msg = ", ".join(f"{r['config']['world_size']} ranks: final loss {r['final_loss']:.4f}" for r in runs)
+          print(f"::{'notice' if ok else 'error'} title=DDP equivalence::replicas identical and losses match ({msg})")
+          raise SystemExit(0 if ok else 1)
+          PY
+      - name: Known-vulnerability audit
+        run: make audit
