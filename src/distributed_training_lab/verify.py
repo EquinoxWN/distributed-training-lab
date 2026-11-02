@@ -12,7 +12,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 
 from .comm import ring_all_reduce
-from .train import free_port
+from .train import PG_TIMEOUT, free_port, write_json_atomic
 
 SIZES = (1, 2, 3, 5, 7, 64, 1000, 4097, 100_003)
 
@@ -28,7 +28,11 @@ def _check(rank: int, world: int, port: int, out: str) -> None:
     os.environ.setdefault("USE_LIBUV", "0")
     torch.set_num_threads(1)
     dist.init_process_group(
-        "gloo", init_method=f"tcp://127.0.0.1:{port}?use_libuv=0", rank=rank, world_size=world
+        "gloo",
+        init_method=f"tcp://127.0.0.1:{port}?use_libuv=0",
+        rank=rank,
+        world_size=world,
+        timeout=PG_TIMEOUT,
     )
     try:
         worst_expected = 0.0
@@ -50,7 +54,7 @@ def _check(rank: int, world: int, port: int, out: str) -> None:
                 "max_abs_err_vs_expected": float(errs[0]),
                 "max_abs_err_vs_gloo": float(errs[1]),
             }
-            Path(out).write_text(json.dumps(result), encoding="utf-8")
+            write_json_atomic(Path(out), result)
     finally:
         dist.destroy_process_group()
 

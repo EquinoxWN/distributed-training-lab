@@ -10,7 +10,7 @@ from typing import Any
 
 from . import data
 from .config import PRESETS, TrainConfig
-from .train import DATA_DIR, run
+from .train import DATA_DIR, run, write_json_atomic
 from .verify import verify_allreduce
 
 RUNS = Path(".tmp") / "runs"
@@ -132,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
             print(_line(r), flush=True)
             results.append(r)
         rows = scaling_table(results)
-        out.write_text(json.dumps({"runs": results, "scaling": rows}, indent=2), encoding="utf-8")
+        write_json_atomic(out, {"runs": results, "scaling": rows})
         print("| ranks | step ms | tokens/s | speedup | efficiency | val loss |")
         print("|---|---|---|---|---|---|")
         for row in rows:

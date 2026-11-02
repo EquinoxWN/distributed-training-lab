@@ -7,6 +7,7 @@ import os
 import socket
 import statistics
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,8 @@ from .config import TrainConfig
 from .model import GPT, model_state_bytes, param_count
 
 DATA_DIR = Path(".tmp") / "data"
+# A rank that dies or hangs fails the others after this long instead of gloo's 30-minute default.
+PG_TIMEOUT = timedelta(minutes=5)
 
 
 def free_port() -> int:
@@ -32,12 +35,22 @@ def free_port() -> int:
         return port
 
 
+def write_json_atomic(path: Path, obj: Any) -> None:
+    """Write JSON to a temporary file and rename it, so readers never see a partial file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".part")
+    tmp.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
 def load_tokens(cfg: TrainConfig) -> data.Splits:
     """Token streams for the configured data source."""
     if cfg.data == "tinystories":
         path = DATA_DIR / data.FILENAME
         if not path.exists() or path.stat().st_size != data.SIZE:
             raise FileNotFoundError(f"{path} missing: run `dtlab data` first")
+        if data.sha256_file(path) != data.SHA256:
+            raise data.IntegrityError(f"{path} does not match the pinned SHA-256: run `dtlab data`")
         return data.split(data.load_bytes(path))
     return data.split(data.synthetic_corpus(400_000, seed=1234))
 
@@ -85,12 +98,12 @@ def worker(rank: int, cfg: TrainConfig, port: int, out: str, init_seed_offset: i
         init_method=f"tcp://127.0.0.1:{port}?use_libuv=0",
         rank=rank,
         world_size=cfg.world_size,
+        timeout=PG_TIMEOUT,
     )
     try:
         summary = _train(rank, cfg, init_seed_offset)
         if rank == 0:
-            Path(out).parent.mkdir(parents=True, exist_ok=True)
-            Path(out).write_text(json.dumps(summary, indent=2), encoding="utf-8")
+            write_json_atomic(Path(out), summary)
     finally:
         dist.destroy_process_group()
 
