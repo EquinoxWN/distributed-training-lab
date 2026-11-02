@@ -5,8 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from distributed_training_lab import cli
+from distributed_training_lab import cli, data
 from distributed_training_lab.config import TrainConfig
+from distributed_training_lab.train import write_json_atomic
 
 
 def test_scale_sweep_end_to_end(
@@ -38,6 +39,24 @@ def test_scaling_table_math() -> None:
     assert rows[2]["efficiency"] == pytest.approx(0.5)
 
 
+def test_scaling_efficiency_is_relative_to_the_smallest_world() -> None:
+    def fake(n: int, step: float) -> dict[str, object]:
+        return {
+            "config": {"world_size": n},
+            "mean_step_s": step,
+            "tokens_per_s": 1.0,
+            "val_loss": 2.0,
+        }
+
+    rows = cli.scaling_table([fake(2, 1.0), fake(4, 0.5), fake(8, 0.5)])
+    assert [r["efficiency"] for r in rows] == pytest.approx([1.0, 1.0, 0.5])
+
+
+def test_scale_rejects_a_bad_world_size_list(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["scale", "--world-sizes", "1,x"]) == 2
+    assert "error:" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("name", ["../x", "a/b", ".hidden", ""])
 def test_output_name_cannot_escape_runs_folder(name: str) -> None:
     with pytest.raises(ValueError, match="plain file name"):
@@ -64,6 +83,25 @@ def test_tinystories_requires_download(
     monkeypatch.chdir(tmp_path)
     assert cli.main(["train", "--world-size", "1", "--data", "tinystories", "--name", "t"]) == 2
     assert "dtlab data" in capsys.readouterr().err
+
+
+def test_tinystories_file_with_the_right_size_but_wrong_bytes_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".tmp" / "data").mkdir(parents=True)
+    (tmp_path / ".tmp" / "data" / data.FILENAME).write_bytes(b"x" * 4096)
+    monkeypatch.setattr(data, "SIZE", 4096)
+    assert cli.main(["train", "--world-size", "1", "--data", "tinystories", "--name", "t"]) == 2
+    assert "SHA-256" in capsys.readouterr().err
+
+
+def test_json_results_are_replaced_whole(tmp_path: Path) -> None:
+    out = tmp_path / "runs" / "r.json"
+    write_json_atomic(out, {"a": 1})
+    write_json_atomic(out, {"a": 2})
+    assert json.loads(out.read_text(encoding="utf-8")) == {"a": 2}
+    assert sorted(p.name for p in out.parent.iterdir()) == ["r.json"]
 
 
 def test_local_batch() -> None:

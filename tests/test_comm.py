@@ -25,6 +25,13 @@ def test_bucket_size_cap_respected_unless_one_tensor_is_bigger() -> None:
             assert nbytes <= cap or len(b) == 1
 
 
+def test_parameters_that_exactly_fill_the_cap_share_one_bucket() -> None:
+    # Reversed order: 100 + 60 bytes fill the 160-byte cap exactly, then 40 bytes start a new bucket.
+    params = [nn.Parameter(torch.zeros(n)) for n in (10, 15, 25)]
+    assert [len(b) for b in make_buckets(params, 160)] == [2, 1]
+    assert [len(b) for b in make_buckets(params, 200)] == [3]
+
+
 def test_bucket_cap_must_be_positive() -> None:
     with pytest.raises(ValueError, match="positive"):
         make_buckets([nn.Parameter(torch.zeros(1))], 0)

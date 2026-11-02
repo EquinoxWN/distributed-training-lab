@@ -23,7 +23,7 @@ setup-gpu:
 lint:
 	$(PY) -m ruff check . && $(PY) -m ruff format --check . && $(PY) -m mypy
 
-# 48 tests; the distributed ones start 2 to 4 gloo processes on the CPU.
+# 57 tests; the distributed ones start 2 to 4 gloo processes on the CPU.
 test:
 	$(PY) -m pytest -q
 

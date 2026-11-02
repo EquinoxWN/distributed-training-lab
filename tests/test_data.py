@@ -102,3 +102,25 @@ def test_download_refuses_tampered_or_oversized_bytes(
 def test_download_refuses_non_https(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="https"):
         data.download(tmp_path, _serve(tmp_path, b"x"), "0" * 64, 1)
+
+
+def test_download_replaces_a_cached_file_with_the_wrong_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b"Once upon a time" * 100
+    stale = tmp_path / data.FILENAME
+    stale.write_bytes(b"X" * len(payload))  # right size, wrong bytes
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: _FakeResponse(payload))
+    digest = hashlib.sha256(payload).hexdigest()
+    assert data.download(tmp_path, "https://example.test/x", digest, len(payload)) == stale
+    assert stale.read_bytes() == payload
+
+
+def test_download_stops_reading_once_past_the_pinned_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resp = _FakeResponse(b"A" * (10 << 20))  # 10 MiB offered for a 1 KiB pin
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: resp)
+    with pytest.raises(data.IntegrityError, match="larger"):
+        data.download(tmp_path, "https://example.test/x", "0" * 64, 1024)
+    assert len(resp.payload) == (10 << 20) - (1 << 20)  # one 1 MiB chunk read, then stopped

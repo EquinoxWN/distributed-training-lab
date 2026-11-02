@@ -15,7 +15,7 @@ A 4.84M-parameter version of the tiny-transformer-scratch model trains on the Ti
 
 ![DDP runs on 1, 2 and 4 CPU ranks and on the RTX 4050](docs/proof/training.jpg)
 
-48 tests pass (including real 2-, 3- and 4-process runs), the ring all-reduce matches the expected sum on 4 ranks, lint and types are clean, and the dependency audit finds nothing:
+57 tests pass (including real 2-, 3- and 4-process runs), the ring all-reduce matches the expected sum on 4 ranks, lint and types are clean, and the dependency audit finds nothing:
 
 ![pytest, dtlab verify, ruff, mypy and pip-audit output](docs/proof/tests.jpg)
 
@@ -62,7 +62,7 @@ In M1, "1, 2 and 4 GPUs" means 1, 2 and 4 separate processes in a gloo process g
 
 | Area | In M1 | Planned |
 |---|---|---|
-| Core | PyTorch 2.14, `torch.distributed` with gloo, hand-written DDP (bucketed ring all-reduce), PyTorch DDP as a reference | FSDP / ZeRO, pipeline parallelism (M2) |
+| Core | PyTorch 2.14 (measured runs; the tests also pass on 2.15.0), `torch.distributed` with gloo, hand-written DDP (bucketed ring all-reduce), PyTorch DDP as a reference | FSDP / ZeRO, pipeline parallelism (M2) |
 | Compute | 1, 2 and 4 gloo processes on the CPU; one RTX 4050 Laptop GPU (CUDA 13.0) | 2 to 4 rented GPUs with NCCL |
 | Measure | step, compute and all-reduce time, tokens/s, CUDA peak memory, JSON per run | PyTorch profiler, memory per strategy, charts (M3) |
 
@@ -76,7 +76,7 @@ Language: **Python** (3.11+, PyTorch). Code in [`src/distributed_training_lab/`]
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 make setup      # PyTorch (CPU build) and dev tools
 make lint       # ruff, ruff format, mypy --strict
-make test       # 48 tests, about 4 minutes (starts real gloo process groups)
+make test       # 57 tests, about 4 minutes (starts real gloo process groups)
 make verify     # ring all-reduce on 4 ranks against the expected sum and gloo
 make scale      # download TinyStories (19 MB, verified), then 1, 2 and 4 CPU ranks
 make gpu        # after make setup-gpu: 1 rank on the GPU, then 2 ranks sharing it
@@ -87,20 +87,20 @@ Single runs: `dtlab train --world-size 4 --model scaled --steps 50`. Results go 
 
 ## Tests and results
 
-Full numbers, method and analysis: [docs/results/m1.md](docs/results/m1.md).
+Full numbers, method and analysis: [docs/results/m1.md](docs/results/m1.md). Quality check of the 10 engineering rules, with a mutation test of the core functions: [docs/quality/2026-11-01.md](docs/quality/2026-11-01.md).
 
 | Test file | Tests | What it proves |
 |---|---|---|
-| `tests/test_distributed.py` | 8 | ring all-reduce = expected sum = gloo on 2, 3, 4 ranks; DDP on 2 and 4 ranks gives the same losses and weights as one process, replicas exactly equal although ranks start from different seeds; hand-written DDP = PyTorch DDP |
-| `tests/test_cli.py` | 12 | `dtlab scale` end to end on 1 and 2 ranks, scaling math, output paths confined to `.tmp/runs`, invalid runs rejected |
+| `tests/test_distributed.py` | 10 | ring all-reduce = expected sum = gloo on 2, 3, 4 ranks; DDP on 2 and 4 ranks gives the same losses and weights as one process, replicas exactly equal although ranks start from different seeds; hand-written DDP = PyTorch DDP; synchronised gradients are the mean across ranks (missing ones count as zero); the replica check reports a diverged rank on every rank |
+| `tests/test_cli.py` | 16 | `dtlab scale` end to end on 1 and 2 ranks, scaling math (also from a base of 2 ranks), output paths confined to `.tmp/runs`, invalid runs and world-size lists rejected, a same-size but altered dataset refused, results replaced whole |
 | `tests/test_model.py` | 10 | shapes, causal mask, parameter counts of the presets, model-state bytes, loss decreases, invalid shapes rejected |
-| `tests/test_data.py` | 10 | rank slices rebuild the single-process batch exactly; download accepted only with the pinned size and SHA-256 over HTTPS |
-| `tests/test_comm.py` | 7 | buckets cover every parameter once within the cap; ring traffic is 2 (N-1)/N of the payload |
+| `tests/test_data.py` | 12 | rank slices rebuild the single-process batch exactly; download accepted only with the pinned size and SHA-256 over HTTPS; a cached file with the wrong hash is replaced; reading stops once past the pinned size |
+| `tests/test_comm.py` | 8 | buckets cover every parameter once within the cap (exactly full buckets are not split); ring traffic is 2 (N-1)/N of the payload |
 | `tests/test_smoke.py` | 1 | package imports |
 
 | Check | Result |
 |---|---|
-| Tests (`make test`) | **48 passed**, 0 failed |
+| Tests (`make test`) | **57 passed**, 0 failed |
 | Ring all-reduce, 4 ranks, sizes 1 to 100,003 | max error 1.8e-15 (float64): PASS |
 | `scaled` model, 1 / 2 / 4 CPU ranks, 15 steps | identical losses (5.656 to 3.145, held-out 3.1102), replica difference 0 |
 | All-reduce of 19.3 MB of gradients per step (6 buckets) | 496 ms on 2 CPU ranks, 235 ms on 4 |
@@ -113,11 +113,11 @@ Full numbers, method and analysis: [docs/results/m1.md](docs/results/m1.md).
 
 ```mermaid
 flowchart TB
-  TD["test_distributed (8)<br/>real 2-4 process runs"] --> C["comm.py, train.py, verify.py"]
-  TC["test_comm (7)<br/>buckets, ring traffic"] --> C
+  TD["test_distributed (10)<br/>real 2-4 process runs"] --> C["comm.py, train.py, verify.py"]
+  TC["test_comm (8)<br/>buckets, ring traffic"] --> C
   TM["test_model (10)<br/>causality, sizes"] --> M["model.py"]
-  TDa["test_data (10)<br/>sharding, verified download"] --> D["data.py"]
-  TCl["test_cli (12)<br/>sweep, validation"] --> CL["cli.py, config.py"]
+  TDa["test_data (12)<br/>sharding, verified download"] --> D["data.py"]
+  TCl["test_cli (16)<br/>sweep, validation"] --> CL["cli.py, config.py"]
 ```
 
 ## Roadmap
@@ -167,7 +167,7 @@ This is a learning and portfolio system, not a hosted production service. Everyt
 
 - Every GitHub Action is pinned to a commit SHA; workflows run read-only, without persisted credentials.
 - Dependabot update pull requests are paused (`open-pull-requests-limit: 0`) so the repository keeps a single `main` branch; dependencies are updated by hand and checked by the CI audit.
-- The dataset is downloaded only over HTTPS, capped at its pinned size and refused unless its SHA-256 matches; the process group rendezvous uses 127.0.0.1; run names cannot write outside `.tmp/runs`.
+- The dataset is downloaded only over HTTPS, capped at its pinned size and refused unless its SHA-256 matches; the training run re-checks the dataset's SHA-256 before using it; the process group rendezvous uses 127.0.0.1 and fails after 5 minutes if a rank stops answering; run names cannot write outside `.tmp/runs`.
 - Report vulnerabilities privately: see [SECURITY.md](SECURITY.md). To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
